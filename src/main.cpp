@@ -15,7 +15,6 @@ extio_io_mode_t mode = DIGITAL_OUTPUT_MODE;
 
 // 熱電対
 M5UnitKmeterISO kmeter;
-uint8_t error_status = 0;
 
 // 定数の定義
 const int pumpPin = 2;    // M5Din Meter本体のポンプ出力用ピン
@@ -25,14 +24,36 @@ const uint8_t sleeptime = 1;      // 熱電対のスリープ時間(sec)
 const int PUMP_CHANNEL = 0;       // PWMのチャンネル
 const int PUMP_BASE_FREQ = 1000;  // PWMの周波数
 int8_t PUMP_SPEED = 50;   // 冷却水ポンプの速度 (0-100%の範囲)
-uint8_t HiTemp = 85;      // 上限温度(Celsius)
-uint8_t LoTemp = 75;      // 下限温度(Celsius)
+int8_t HiTemp = 85;       // 上限温度(Celsius)
+int8_t LoTemp = 75;       // 下限温度(Celsius)
 uint8_t TargetTemp = (HiTemp + LoTemp ) / 2;  // 目標温度(Celsius)
-float NowTemperature = 0.0;   // 現在温度(Celsius)
+volatile float NowTemperature = 0.0;   // 現在温度(Celsius)
 int16_t oldPosition = -999;   // 更新前のエンコーダの値
 bool cooling = false;     // 冷却中
 bool heating = false;     // 加熱中
 enum Mode {temp, pump, Hi, Lo, Mode_NUM};  // 画面遷移モード
+
+// 温度の読み取り
+void TempRead(void *pvParameters) {
+  static uint8_t error_status;
+  static unsigned long getTempTime;     // 温度を読み取った時刻
+  while (1) {
+    error_status = kmeter.getReadyStatus();
+    if (millis() - getTempTime >= sleeptime * 1000) {  // センサーのスリープ時間以上経過したら
+      if (error_status == 0) {
+        NowTemperature = ((float)(kmeter.getCelsiusTempValue())) / 100;
+        //Serial.printf("Celsius Temp: %.2fC\t", NowTemperature);
+        //Serial.printf(
+        //    "Chip Celsius Temp: %.2fC\r\n",
+        //    ((float)(kmeter.getInternalCelsiusTempValue())) / 100);
+      } else {
+        Serial.printf("Error: %d", kmeter.getReadyStatus());
+      }
+      getTempTime = millis();
+    }
+    delay(1);
+  }
+}
 
 void settingmode(enum Mode setmode, bool flash){
   static uint8_t PUMP_int8t; // ポンプ
@@ -170,31 +191,26 @@ void setup() {
   // 冷却水ポンプを常時動作させる
   uint8_t PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);
   ledcWrite(PUMP_CHANNEL, PUMP_int8t);
+
+  xTaskCreateUniversal(
+    TempRead,             // 作成するタスク関数
+    "TempRead",           // 表示用タスク名
+    8192,                 // スタックメモリ量
+    NULL,                 // 起動パラメータ
+    1,                    // 優先度
+    NULL,                 // タスクハンドル
+    PRO_CPU_NUM           // 実行するコア
+  );
+
 }
 
 void loop() {
-  static int setmode;
+  static int setmode;                   // 画面遷移モード
   TargetTemp = (HiTemp + LoTemp ) / 2;  // 目標温度(Celsius)
-  static unsigned long getTempTime;     // 温度を読み取った時刻
-  bool flash = false;                    // 画面更新
+  bool flash = false;                   // 画面更新
 
   // ボタンの読み取り
   DinMeter.update();
-
-  // 温度の読み取り
-  error_status = kmeter.getReadyStatus();
-  if (millis() - getTempTime >= sleeptime * 1000) {  // センサーのスリープ時間以上経過したら
-    if (error_status == 0) {
-      NowTemperature = ((float)(kmeter.getCelsiusTempValue())) / 100;
-      //Serial.printf("Celsius Temp: %.2fC\t", NowTemperature);
-      //Serial.printf(
-      //    "Chip Celsius Temp: %.2fC\r\n",
-      //    ((float)(kmeter.getInternalCelsiusTempValue())) / 100);
-    } else {
-      Serial.printf("Error: %d", kmeter.getReadyStatus());
-    }
-    getTempTime = millis();
-  }
 
   // 冷却ファンの制御
   Serial.print("Fan: ");
@@ -203,13 +219,17 @@ void loop() {
       cooling = true;
       extio.setDigitalOutput(fanPin, HIGH);
     }
-    //Serial.print("ON\t");
   } else if (NowTemperature < TargetTemp) {
     if(cooling){
       cooling = false;
       extio.setDigitalOutput(fanPin, LOW);
     }
-    //Serial.print("OFF\t");
+  }
+  if (cooling) {
+    Serial.print("ON\t");
+  }
+  else {
+    Serial.print("OFF\t");
   }
 
   // ヒーターの制御
@@ -219,13 +239,17 @@ void loop() {
       heating = true;
       extio.setDigitalOutput(heaterPin, HIGH);
     }
-    //Serial.print("ON\t");
   } else if (NowTemperature > TargetTemp) {
     if(heating){
       heating = false;
       extio.setDigitalOutput(heaterPin, LOW);
     }
-    //Serial.print("OFF\t");
+  }
+  if (heating) {
+    Serial.print("ON\t");
+  }
+  else {
+    Serial.print("OFF\t");
   }
 
   Serial.println("");
