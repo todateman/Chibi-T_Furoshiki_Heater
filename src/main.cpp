@@ -1,0 +1,249 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <M5DinMeter.h>
+#include <M5_EXTIO2.h>
+#include "M5UnitKmeterISO.h"
+
+// エンコーダ
+#include "driver/pcnt.h"
+#define PULSE_PIN_A 41
+#define PULSE_PIN_B 40
+
+
+// M5_EXTIO2
+M5_EXTIO2 extio;
+extio_io_mode_t mode = DIGITAL_OUTPUT_MODE;
+
+// 熱電対
+//M5_KMeter sensor;
+M5UnitKmeterISO kmeter;
+uint8_t error_status = 0;
+
+// 定数の定義
+const int pumpPin = 2;    // M5Din Meter本体のポンプ出力用ピン
+const int fanPin = 1;     // M5_EXTIO2の冷却ファン用ピン
+const int heaterPin = 2;  // M5_EXTIO2のヒーター用ピン
+const uint8_t sleeptime = 1; // 熱電対のスリープ時間(sec)
+uint8_t pumpSpeed = 128;  // 冷却水ポンプの速度 (0-255の範囲)
+uint8_t HiTemp = 85;      // 上限温度(Celsius)
+uint8_t LoTemp = 75;      // 下限温度(Celsius)
+uint8_t TargetTemp = (HiTemp + LoTemp ) / 2;  // 目標温度(Celsius)
+float NowTemperature = 0.0;   // 現在温度(Celsius)
+int16_t oldPosition = -999;   // 更新前のエンコーダの値
+bool cooling = false;     // 冷却中
+bool heating = false;     // 加熱中
+enum Mode {temp, pump, Hi, Lo, Mode_NUM};  // 画面遷移モード
+
+void settingmode(enum Mode setmode, bool flash){
+  static uint8_t pump0_100;
+  static int16_t newPosition;
+  static float OldTemperature = 999.9;
+  int8_t count = 0;
+
+  DinMeter.Display.setTextColor(GREEN, BLACK);
+  DinMeter.Display.setTextDatum(middle_center);
+  DinMeter.Display.setTextFont(&fonts::Orbitron_Light_24);
+  DinMeter.Display.setTextSize(1);
+
+  // エンコーダ読み取り
+  //newPosition = DinMeter.Encoder.read();
+  pcnt_get_counter_value(PCNT_UNIT_0, &newPosition);
+  if (newPosition != oldPosition) {
+    DinMeter.Speaker.tone(8000, 20);
+    //DinMeter.Display.clear();
+    if (newPosition > oldPosition) {  // 時計回り
+      count++;
+    }
+    else {                            // 反時計回り
+      count--;
+    }
+    //Serial.printf("%d\t%d\t%d\n", newPosition, oldPosition, count);
+    oldPosition = newPosition;
+  }
+
+  if (NowTemperature != OldTemperature || flash) {
+    //DinMeter.Display.clear();
+    DinMeter.Display.drawString(" current: " + String(NowTemperature) + ("C' "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 1);
+    OldTemperature = NowTemperature;
+  }
+
+  switch(setmode) {
+    case temp:
+      DinMeter.Display.drawString(" Target: " + String(TargetTemp) + ("C' "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 2);
+      break;
+
+    case pump:
+      if      (count > 0) {pumpSpeed += 13;}
+      else if (count < 0) {pumpSpeed -= 13;}
+      pumpSpeed = constrain(pumpSpeed, 0, 255);
+      pump0_100 = map(pumpSpeed, 0, 255, 0, 100);
+      DinMeter.Display.drawString(" pump: " + String(pump0_100) + ("% "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 2);
+      analogWrite(pumpPin, pumpSpeed);
+      break;
+
+    case Hi:
+      if      (count > 0) {HiTemp++;}
+      else if (count < 0) {HiTemp--;}
+      HiTemp = constrain(HiTemp, 0, 100);
+      DinMeter.Display.drawString(" HiTemp: " + String(HiTemp) + ("C' "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 2);
+      break;
+
+    case Lo:
+      if      (count > 0) {LoTemp++;}
+      else if (count < 0) {LoTemp--;}
+      LoTemp = constrain(LoTemp, 0, 100);
+      DinMeter.Display.drawString(" LoTemp: " + String(LoTemp) + ("C' "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 2);
+      break;
+  }
+
+  //DinMeter.Display.setTextFont(&fonts::Orbitron_Light_24);
+  //DinMeter.Display.setTextSize(0.8);
+  if (cooling) {
+    DinMeter.Display.setTextColor(BLACK, ORANGE);
+  }
+  else {
+    DinMeter.Display.setTextColor(GREEN, BLACK);
+  }
+  DinMeter.Display.drawString(" COOL ", DinMeter.Display.width() / 3 * 1 - 10, DinMeter.Display.height() / 4 * 3);
+  if (heating) {
+    DinMeter.Display.setTextColor(BLACK, ORANGE);
+  }
+  else {
+    DinMeter.Display.setTextColor(GREEN, BLACK);
+  }
+  DinMeter.Display.drawString(" HEAT ", DinMeter.Display.width() / 3 * 2 + 10, DinMeter.Display.height() / 4 * 3);
+}
+
+void setup() {
+  auto cfg = M5.config();
+  DinMeter.begin(cfg, false);
+  Serial.begin(115200);
+
+  pinMode(pumpPin, OUTPUT); 
+
+  DinMeter.Display.setRotation(1);
+  DinMeter.Display.setTextColor(GREEN, BLACK);
+  DinMeter.Display.setTextDatum(middle_center);
+  DinMeter.Display.setTextFont(&fonts::Orbitron_Light_24);
+  DinMeter.Display.setTextSize(1);
+
+  // パルスカウンタの設定
+  pcnt_config_t pcnt_config = {};
+  pcnt_config.pulse_gpio_num  = PULSE_PIN_A;
+  pcnt_config.ctrl_gpio_num   = PULSE_PIN_B;
+  pcnt_config.lctrl_mode      = PCNT_MODE_KEEP;
+  pcnt_config.hctrl_mode      = PCNT_MODE_REVERSE;
+  pcnt_config.pos_mode        = PCNT_COUNT_INC;
+  pcnt_config.neg_mode        = PCNT_COUNT_DEC;
+  pcnt_config.counter_h_lim   = 32767;
+  pcnt_config.counter_l_lim   = -32768;
+  pcnt_config.unit            = PCNT_UNIT_0;
+  pcnt_config.channel         = PCNT_CHANNEL_0;
+
+  pcnt_unit_config(&pcnt_config);
+
+  pcnt_counter_pause(PCNT_UNIT_0);
+  pcnt_counter_clear(PCNT_UNIT_0);
+  pcnt_counter_resume(PCNT_UNIT_0);
+
+  // I2Cの初期化
+  //Wire.begin((int)SDA, (int)SCL, 400000L);      // Wire.begin(21, 22, 400000L);
+
+  // 熱電対の設定
+  while (!kmeter.begin(&Wire, KMETER_DEFAULT_ADDR, (int)SDA, (int)SCL, 100000L)) {
+    Serial.println("Unit KmeterISO not found");
+  }
+
+  // M5_EXTIO2の設定
+  while (!extio.begin(&Wire, (int)SDA, (int)SCL, 0x45)) {
+    Serial.println("extio Connect Error");
+    delay(100);
+  }
+  // extio.setAllPinMode(DIGITAL_INPUT_MODE);
+  // extio.setAllPinMode(DIGITAL_OUTPUT_MODE);
+  // extio.setAllPinMode(ADC_INPUT_MODE);
+  // extio.setAllPinMode(SERVO_CTL_MODE);
+  // extio.setAllPinMode(RGB_LED_MODE);
+  extio.setPinMode(fanPin, DIGITAL_OUTPUT_MODE);
+  extio.setPinMode(heaterPin, DIGITAL_OUTPUT_MODE);
+
+  // 冷却水ポンプを常時動作させる
+  analogWrite(pumpPin, pumpSpeed);
+}
+
+void loop() {
+  static int setmode;
+  TargetTemp = (HiTemp + LoTemp ) / 2;  // 目標温度(Celsius)
+  static unsigned long getTempTime;     // 温度を読み取った時刻
+  bool flash = false;                    // 画面更新
+
+  // ボタンの読み取り
+  DinMeter.update();
+
+  // 温度の読み取り
+  error_status = kmeter.getReadyStatus();
+  if (millis() - getTempTime >= sleeptime * 1000) {  // センサーのスリープ時間以上経過したら
+    if (error_status == 0) {
+      NowTemperature = ((float)(kmeter.getCelsiusTempValue())) / 100;
+      //Serial.printf("Celsius Temp: %.2fC\t", NowTemperature);
+      //Serial.printf(
+      //    "Chip Celsius Temp: %.2fC\r\n",
+      //    ((float)(kmeter.getInternalCelsiusTempValue())) / 100);
+    } else {
+      Serial.printf("Error: %d", kmeter.getReadyStatus());
+    }
+    getTempTime = millis();
+  }
+
+  // 冷却ファンの制御
+  Serial.print("Fan: ");
+  if (NowTemperature > HiTemp) {
+    if(!cooling){
+      cooling = true;
+      extio.setDigitalOutput(fanPin, HIGH);
+    }
+    //Serial.print("ON\t");
+  } else if (NowTemperature < TargetTemp) {
+    if(cooling){
+      cooling = false;
+      extio.setDigitalOutput(fanPin, LOW);
+    }
+    //Serial.print("OFF\t");
+  }
+
+  // ヒーターの制御
+  Serial.print("Heater: ");
+  if (NowTemperature < LoTemp) {
+    if(!heating){
+      heating = true;
+      extio.setDigitalOutput(heaterPin, HIGH);
+    }
+    //Serial.print("ON\t");
+  } else if (NowTemperature > TargetTemp) {
+    if(heating){
+      heating = false;
+      extio.setDigitalOutput(heaterPin, LOW);
+    }
+    //Serial.print("OFF\t");
+  }
+
+  Serial.println("");
+
+  if (DinMeter.BtnA.wasPressed()) {
+    DinMeter.Speaker.tone(8000, 20);
+    setmode++;
+    DinMeter.Display.clear();
+    flash = true;
+    if (setmode >= Mode_NUM){
+      setmode = 0;
+    }
+  }
+  if (DinMeter.BtnA.pressedFor(5000)) {
+    //DinMeter.Encoder.write(100);
+  }
+
+  // 画面遷移
+  settingmode(static_cast<Mode>(setmode), flash);
+
+  //delay(100);
+}
