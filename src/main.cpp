@@ -9,13 +9,11 @@
 #define PULSE_PIN_A 41
 #define PULSE_PIN_B 40
 
-
 // M5_EXTIO2
 M5_EXTIO2 extio;
 extio_io_mode_t mode = DIGITAL_OUTPUT_MODE;
 
 // 熱電対
-//M5_KMeter sensor;
 M5UnitKmeterISO kmeter;
 uint8_t error_status = 0;
 
@@ -23,8 +21,10 @@ uint8_t error_status = 0;
 const int pumpPin = 2;    // M5Din Meter本体のポンプ出力用ピン
 const int fanPin = 1;     // M5_EXTIO2の冷却ファン用ピン
 const int heaterPin = 2;  // M5_EXTIO2のヒーター用ピン
-const uint8_t sleeptime = 1; // 熱電対のスリープ時間(sec)
-uint8_t pumpSpeed = 128;  // 冷却水ポンプの速度 (0-255の範囲)
+const uint8_t sleeptime = 1;      // 熱電対のスリープ時間(sec)
+const int PUMP_CHANNEL = 0;       // PWMのチャンネル
+const int PUMP_BASE_FREQ = 1000;  // PWMの周波数
+int8_t PUMP_SPEED = 50;   // 冷却水ポンプの速度 (0-100%の範囲)
 uint8_t HiTemp = 85;      // 上限温度(Celsius)
 uint8_t LoTemp = 75;      // 下限温度(Celsius)
 uint8_t TargetTemp = (HiTemp + LoTemp ) / 2;  // 目標温度(Celsius)
@@ -35,7 +35,7 @@ bool heating = false;     // 加熱中
 enum Mode {temp, pump, Hi, Lo, Mode_NUM};  // 画面遷移モード
 
 void settingmode(enum Mode setmode, bool flash){
-  static uint8_t pump0_100;
+  static uint8_t PUMP_int8t; // ポンプ
   static int16_t newPosition;
   static float OldTemperature = 999.9;
   int8_t count = 0;
@@ -50,8 +50,7 @@ void settingmode(enum Mode setmode, bool flash){
   pcnt_get_counter_value(PCNT_UNIT_0, &newPosition);
   if (newPosition != oldPosition) {
     DinMeter.Speaker.tone(8000, 20);
-    //DinMeter.Display.clear();
-    if (newPosition > oldPosition) {  // 時計回り
+    if (newPosition < oldPosition) {  // 時計回り
       count++;
     }
     else {                            // 反時計回り
@@ -62,7 +61,6 @@ void settingmode(enum Mode setmode, bool flash){
   }
 
   if (NowTemperature != OldTemperature || flash) {
-    //DinMeter.Display.clear();
     DinMeter.Display.drawString(" current: " + String(NowTemperature) + ("C' "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 1);
     OldTemperature = NowTemperature;
   }
@@ -73,12 +71,12 @@ void settingmode(enum Mode setmode, bool flash){
       break;
 
     case pump:
-      if      (count > 0) {pumpSpeed += 13;}
-      else if (count < 0) {pumpSpeed -= 13;}
-      pumpSpeed = constrain(pumpSpeed, 0, 255);
-      pump0_100 = map(pumpSpeed, 0, 255, 0, 100);
-      DinMeter.Display.drawString(" pump: " + String(pump0_100) + ("% "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 2);
-      analogWrite(pumpPin, pumpSpeed);
+      if      (count > 0) {PUMP_SPEED += 5;}
+      else if (count < 0) {PUMP_SPEED -= 5;}
+      PUMP_SPEED = constrain(PUMP_SPEED, 0, 100);
+      DinMeter.Display.drawString(" pump: " + String(PUMP_SPEED) + ("% "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 2);
+      PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);
+      ledcWrite(PUMP_CHANNEL, PUMP_int8t);
       break;
 
     case Hi:
@@ -96,10 +94,8 @@ void settingmode(enum Mode setmode, bool flash){
       break;
   }
 
-  //DinMeter.Display.setTextFont(&fonts::Orbitron_Light_24);
-  //DinMeter.Display.setTextSize(0.8);
   if (cooling) {
-    DinMeter.Display.setTextColor(BLACK, ORANGE);
+    DinMeter.Display.setTextColor(BLACK, BLUE);
   }
   else {
     DinMeter.Display.setTextColor(GREEN, BLACK);
@@ -116,10 +112,14 @@ void settingmode(enum Mode setmode, bool flash){
 
 void setup() {
   auto cfg = M5.config();
+  //DinMeter.begin(cfg, true);
   DinMeter.begin(cfg, false);
   Serial.begin(115200);
 
-  pinMode(pumpPin, OUTPUT); 
+  // PWMの初期化
+  pinMode(pumpPin, OUTPUT);                   // PWM出力を行う端子を出力端子として設定
+  ledcSetup(PUMP_CHANNEL, PUMP_BASE_FREQ, 8); // PWM出力波形の初期設定(チャンネル, 周波数 bit)
+  ledcAttachPin(pumpPin, PUMP_CHANNEL);       // チャンネルに対する出力端子を設定
 
   DinMeter.Display.setRotation(1);
   DinMeter.Display.setTextColor(GREEN, BLACK);
@@ -131,8 +131,8 @@ void setup() {
   pcnt_config_t pcnt_config = {};
   pcnt_config.pulse_gpio_num  = PULSE_PIN_A;
   pcnt_config.ctrl_gpio_num   = PULSE_PIN_B;
-  pcnt_config.lctrl_mode      = PCNT_MODE_KEEP;
-  pcnt_config.hctrl_mode      = PCNT_MODE_REVERSE;
+  pcnt_config.lctrl_mode      = PCNT_MODE_REVERSE;
+  pcnt_config.hctrl_mode      = PCNT_MODE_KEEP;
   pcnt_config.pos_mode        = PCNT_COUNT_INC;
   pcnt_config.neg_mode        = PCNT_COUNT_DEC;
   pcnt_config.counter_h_lim   = 32767;
@@ -168,7 +168,8 @@ void setup() {
   extio.setPinMode(heaterPin, DIGITAL_OUTPUT_MODE);
 
   // 冷却水ポンプを常時動作させる
-  analogWrite(pumpPin, pumpSpeed);
+  uint8_t PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);
+  ledcWrite(PUMP_CHANNEL, PUMP_int8t);
 }
 
 void loop() {
