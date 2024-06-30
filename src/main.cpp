@@ -78,7 +78,7 @@ void TempRead(void *pvParameters) {
         //    ((float)(kmeter.getInternalCelsiusTempValue())) / 100);
 
         std::string newData = String(NowTemperature).c_str();   //BLE Peripheral用にデータを格納
-        pCharacteristic->setValue(newData);                     //BLE PeripheralのReadコマンドでデータを送信
+        //pCharacteristic->setValue(newData);                     //BLE PeripheralのReadコマンドでデータを送信
         pNotifyCharacteristic->setValue(newData);               //BLE PeripheralのNotifyコマンドでデータを送信
         pNotifyCharacteristic->notify();
       } else {
