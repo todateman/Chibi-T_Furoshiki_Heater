@@ -11,10 +11,12 @@
 // BLE サービスとキャラクタリスティックのUUIDを定義 https://www.uuidgenerator.net/version4
 #define SERVICE_UUID "7c445963-c1a4-4635-a119-b490ed272552"
 #define CHARACTERISTIC_UUID "ced47adc-db99-46a2-9248-cb70b7bd836f"
+#define NOTIFY_CHARACTERISTIC_UUID "dca30b2b-658e-484a-a7fc-974c08800429"
 
 // キャラクタリスティックの初期データ
 std::string initialData = "Engine Temp";
-BLECharacteristic *pCharacteristic;
+BLECharacteristic *pCharacteristic;       // Read/Write
+BLECharacteristic *pNotifyCharacteristic; // Notify
 
 // エンコーダ
 #include "driver/pcnt.h"
@@ -75,9 +77,10 @@ void TempRead(void *pvParameters) {
         //    "Chip Celsius Temp: %.2fC\r\n",
         //    ((float)(kmeter.getInternalCelsiusTempValue())) / 100);
 
-        //BLE Peripheralでデータを送信
-        std::string newData = String(NowTemperature).c_str();
-        pCharacteristic->setValue(newData);
+        std::string newData = String(NowTemperature).c_str();   //BLE Peripheral用にデータを格納
+        pCharacteristic->setValue(newData);                     //BLE PeripheralのReadコマンドでデータを送信
+        pNotifyCharacteristic->setValue(newData);               //BLE PeripheralのNotifyコマンドでデータを送信
+        pNotifyCharacteristic->notify();
       } else {
         Serial.printf("Error: %d", kmeter.getReadyStatus());
       }
@@ -239,6 +242,11 @@ void setup() {
     // キャラクタリスティックに初期データを設定
     pCharacteristic->setValue(initialData);
     pCharacteristic->addDescriptor(new BLE2902());
+    // 権限を最小にするためにNotify用のCharacteristicはReadWrite用とは別に定義
+    pNotifyCharacteristic = pService->createCharacteristic(
+                            NOTIFY_CHARACTERISTIC_UUID,
+                            BLECharacteristic::PROPERTY_NOTIFY);
+    pNotifyCharacteristic->addDescriptor(new BLE2902());
     // サービスの開始
     pService->start();
     // アドバタイジングの開始
