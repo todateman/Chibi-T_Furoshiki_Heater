@@ -4,6 +4,18 @@
 #include <M5_EXTIO2.h>
 #include "M5UnitKmeterISO.h"
 
+// BLE Peripheral
+#include <BLEDevice.h>
+#include <BLE2902.h>
+
+// BLE サービスとキャラクタリスティックのUUIDを定義 https://www.uuidgenerator.net/version4
+#define SERVICE_UUID "7c445963-c1a4-4635-a119-b490ed272552"
+#define CHARACTERISTIC_UUID "ced47adc-db99-46a2-9248-cb70b7bd836f"
+
+// キャラクタリスティックの初期データ
+std::string initialData = "Engine Temp";
+BLECharacteristic *pCharacteristic;
+
 // エンコーダ
 #include "driver/pcnt.h"
 #define PULSE_PIN_A 41
@@ -29,9 +41,25 @@ int8_t LoTemp = 75;       // 下限温度(Celsius)
 uint8_t TargetTemp = (HiTemp + LoTemp ) / 2;  // 目標温度(Celsius)
 volatile float NowTemperature = 0.0;   // 現在温度(Celsius)
 int16_t oldPosition = -999;   // 更新前のエンコーダの値
-bool cooling = false;     // 冷却中
-bool heating = false;     // 加熱中
+bool cooling = false;         // 冷却中
+bool heating = false;         // 加熱中
+bool BLEPeripheral = true;    // BLE Peripheral有効/無効
 enum Mode {temp, pump, Hi, Lo, Mode_NUM};  // 画面遷移モード
+
+// BLE Serverのコールバックで接続に対する処理を行う https://qiita.com/IRumA/items/00fc746892570f8d1c38
+class ServerCallbacks : public BLEServerCallbacks {
+  // 接続時に呼び出される
+  void onConnect(BLEServer* pServer) {
+    // 接続されたらAdvertisingを停止する
+    BLEDevice::stopAdvertising();
+  }
+
+  // 切断された時に呼び出される
+  void onDisconnect(BLEServer* pServer) {
+    // 再接続のためにもう一度Advertisingする
+    BLEDevice::startAdvertising();
+  }
+};
 
 // 温度の読み取り
 void TempRead(void *pvParameters) {
@@ -46,6 +74,10 @@ void TempRead(void *pvParameters) {
         //Serial.printf(
         //    "Chip Celsius Temp: %.2fC\r\n",
         //    ((float)(kmeter.getInternalCelsiusTempValue())) / 100);
+
+        //BLE Peripheralでデータを送信
+        std::string newData = String(NowTemperature).c_str();
+        pCharacteristic->setValue(newData);
       } else {
         Serial.printf("Error: %d", kmeter.getReadyStatus());
       }
@@ -55,6 +87,7 @@ void TempRead(void *pvParameters) {
   }
 }
 
+// 画面遷移
 void settingmode(enum Mode setmode, bool flash){
   static uint8_t PUMP_int8t; // ポンプ
   static int16_t newPosition;
@@ -188,16 +221,47 @@ void setup() {
   extio.setPinMode(fanPin, DIGITAL_OUTPUT_MODE);
   extio.setPinMode(heaterPin, DIGITAL_OUTPUT_MODE);
 
+  if(BLEPeripheral){
+    // BLEデバイスの初期化
+    BLEDevice::init("M5Din Furoshiki Heater");  
+    // BLEサーバの作成
+    BLEServer *pServer = BLEDevice::createServer();
+    // 再接続時のコールバック処理の作成
+    pServer->setCallbacks(new ServerCallbacks());
+    // BLEサービスの作成
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    // BLEキャラクタリスティックの作成
+    pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ |
+                      BLECharacteristic::PROPERTY_WRITE
+                    );
+    // キャラクタリスティックに初期データを設定
+    pCharacteristic->setValue(initialData);
+    pCharacteristic->addDescriptor(new BLE2902());
+    // サービスの開始
+    pService->start();
+    // アドバタイジングの開始
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06);  // Functions that help with iPhone connections issue
+    pAdvertising->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
+    Serial.println("Characteristic defined! Now you can read it in your phone!");
+  }
+
   // 冷却水ポンプを常時動作させる
   uint8_t PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);
   ledcWrite(PUMP_CHANNEL, PUMP_int8t);
 
+  // エンジン温度取得タスクを生成
   xTaskCreateUniversal(
     TempRead,             // 作成するタスク関数
     "TempRead",           // 表示用タスク名
     8192,                 // スタックメモリ量
     NULL,                 // 起動パラメータ
-    1,                    // 優先度
+    2,                    // 優先度
     NULL,                 // タスクハンドル
     PRO_CPU_NUM           // 実行するコア
   );
