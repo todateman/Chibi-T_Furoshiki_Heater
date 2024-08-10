@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <M5DinMeter.h>
-#include <M5_EXTIO2.h>
+// #include <M5_EXTIO2.h>
 #include "M5UnitKmeterISO.h"
 
 // BLE Peripheral
@@ -24,20 +24,20 @@ BLECharacteristic *pNotifyCharacteristic; // Notify
 #define PULSE_PIN_B 40
 
 // M5_EXTIO2
-M5_EXTIO2 extio;
-extio_io_mode_t mode = DIGITAL_OUTPUT_MODE;
+// M5_EXTIO2 extio;
+// extio_io_mode_t mode = DIGITAL_OUTPUT_MODE;
 
 // 熱電対
 M5UnitKmeterISO kmeter;
 
 // 定数の定義
 const int pumpPin = 2;    // M5Din Meter本体のポンプ出力用ピン
-const int fanPin = 1;     // M5_EXTIO2の冷却ファン用ピン
-const int heaterPin = 2;  // M5_EXTIO2のヒーター用ピン
+// const int fanPin = 1;     // M5_EXTIO2の冷却ファン用ピン
+// const int heaterPin = 2;  // M5_EXTIO2のヒーター用ピン
 const uint8_t sleeptime = 1;      // 熱電対のスリープ時間(sec)
 const int PUMP_CHANNEL = 0;       // PWMのチャンネル
 const int PUMP_BASE_FREQ = 1000;  // PWMの周波数
-int8_t PUMP_SPEED = 50;   // 冷却水ポンプの速度 (0-100%の範囲)
+int8_t PUMP_SPEED = 50;   // 保温水ポンプの速度 (0-100%の範囲)
 int8_t HiTemp = 85;       // 上限温度(Celsius)
 int8_t LoTemp = 75;       // 下限温度(Celsius)
 uint8_t TargetTemp = (HiTemp + LoTemp ) / 2;  // 目標温度(Celsius)
@@ -212,6 +212,7 @@ void setup() {
   }
 
   // M5_EXTIO2の設定
+  /*
   while (!extio.begin(&Wire, (int)SDA, (int)SCL, 0x45)) {
     Serial.println("extio Connect Error");
     delay(100);
@@ -223,6 +224,7 @@ void setup() {
   // extio.setAllPinMode(RGB_LED_MODE);
   extio.setPinMode(fanPin, DIGITAL_OUTPUT_MODE);
   extio.setPinMode(heaterPin, DIGITAL_OUTPUT_MODE);
+  */
 
   if(BLEPeripheral){
     // BLEデバイスの初期化
@@ -259,10 +261,6 @@ void setup() {
     Serial.println("Characteristic defined! Now you can read it in your phone!");
   }
 
-  // 冷却水ポンプを常時動作させる
-  uint8_t PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);
-  ledcWrite(PUMP_CHANNEL, PUMP_int8t);
-
   // エンジン温度取得タスクを生成
   xTaskCreateUniversal(
     TempRead,             // 作成するタスク関数
@@ -289,19 +287,20 @@ void loop() {
   if (NowTemperature > HiTemp) {
     if(!cooling){
       cooling = true;
-      extio.setDigitalOutput(fanPin, HIGH);
     }
   } else if (NowTemperature < TargetTemp) {
     if(cooling){
       cooling = false;
-      extio.setDigitalOutput(fanPin, LOW);
     }
   }
   if (cooling) {
     Serial.print("ON\t");
+    // extio.setDigitalOutput(fanPin, HIGH);
+    PUMP_SPEED = 0;                           // 保温水ポンプを止める
   }
   else {
     Serial.print("OFF\t");
+    // extio.setDigitalOutput(fanPin, LOW);
   }
 
   // ヒーターの制御
@@ -309,22 +308,26 @@ void loop() {
   if (NowTemperature < LoTemp) {
     if(!heating){
       heating = true;
-      extio.setDigitalOutput(heaterPin, HIGH);
     }
   } else if (NowTemperature > TargetTemp) {
     if(heating){
       heating = false;
-      extio.setDigitalOutput(heaterPin, LOW);
     }
   }
   if (heating) {
     Serial.print("ON\t");
+    // extio.setDigitalOutput(heaterPin, HIGH);
   }
   else {
     Serial.print("OFF\t");
+    // extio.setDigitalOutput(heaterPin, LOW);
   }
 
   Serial.println("");
+
+  // 保温水ポンプを動作させる
+  uint8_t PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);
+  ledcWrite(PUMP_CHANNEL, PUMP_int8t);
 
   if (DinMeter.BtnA.wasPressed()) {
     DinMeter.Speaker.tone(8000, 20);
