@@ -124,18 +124,6 @@ void settingmode(enum Mode setmode, bool flash){
     oldPosition = newPosition;
   }
 
-  if (save) {                             // EEPROMに保存した場合
-    if (millis() - saveTime < 2000) {       // 保存から2000msec間
-      DinMeter.Display.clear(TFT_RED);        // 背景色を赤に設定
-    }
-    else {                                  // 2000msecを過ぎたら
-      save = false;
-    }
-  }
-  else {                                  // EEPROMに保存しなかった場合
-    DinMeter.Display.clear(TFT_BLACK);      // 背景色を黒に設定
-  }
-  
   // 温度が更新された場合
   if (NowTemperature != OldTemperature || flash) {
     DinMeter.Display.drawString(" current: " + String(NowTemperature) + ("C' "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 1);
@@ -208,9 +196,9 @@ void setup() {
       Serial.println("ERROR! EEPROM commit failed");
     }
   }
-  EEPROM.get(0, PUMP_SPEED);                  // ポンプ速度をEEPROMから読み取り
-  EEPROM.get(sizeof(PUMP_SPEED), HiTemp);     // 上限温度をEEPROMから読み取り
-  EEPROM.get(sizeof(HiTemp), LoTemp);         // 下限温度をEEPROMから読み取り
+  EEPROM.get(addr, PUMP_SPEED);                                     // ポンプ速度をEEPROMから読み取り
+  EEPROM.get(addr + sizeof(PUMP_SPEED), HiTemp);                    // 上限温度をEEPROMから読み取り
+  EEPROM.get(addr + sizeof(PUMP_SPEED) + sizeof(HiTemp), LoTemp);   // 下限温度をEEPROMから読み取り
 
   // PWMの初期化
   pinMode(pumpPin, OUTPUT);                   // PWM出力を行う端子を出力端子として設定
@@ -372,6 +360,7 @@ void loop() {
   if (DinMeter.BtnA.wasPressed()) {
     DinMeter.Speaker.tone(8000, 20);
     setmode++;
+    DinMeter.Display.clear(TFT_BLACK);
     flash = true;
     if (setmode >= Mode_NUM){
       setmode = 0;
@@ -379,18 +368,24 @@ void loop() {
   }
 
   // EEPROMに設定値を書き込み
-  if (DinMeter.BtnA.pressedFor(2000)) {
-    EEPROM.put(0, PUMP_SPEED);                  // ポンプ速度をEEPROMに書き込み
-    EEPROM.put(sizeof(PUMP_SPEED), HiTemp);     // 上限温度をEEPROMに書き込み
-    EEPROM.put(sizeof(HiTemp), LoTemp);         // 下限温度をEEPROMに書き込み
+  if (!save && DinMeter.BtnA.pressedFor(2000)) {
+    EEPROM.put(addr, PUMP_SPEED);                                     // ポンプ速度をEEPROMに書き込み
+    EEPROM.put(addr + sizeof(PUMP_SPEED), HiTemp);                    // 上限温度をEEPROMに書き込み
+    EEPROM.put(addr + sizeof(PUMP_SPEED) + sizeof(HiTemp), LoTemp);   // 下限温度をEEPROMに書き込み
     Serial.println("Settings saved to EEPROM.");
     if (EEPROM.commit()) {
       Serial.println("EEPROM successfully committed");
+      DinMeter.Display.clear(TFT_RED);                                // 背景色を赤に設定
     } else {
       Serial.println("ERROR! EEPROM commit failed");
     }
     save = true;
     saveTime = millis();
+  }
+
+  if (save && millis() - saveTime > 2000) {                           // EEPROMに保存後2000msecを過ぎたら
+    DinMeter.Display.clear(TFT_BLACK);
+    save = false;
   }
 
   // 画面遷移
