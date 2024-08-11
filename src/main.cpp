@@ -4,6 +4,11 @@
 // #include <M5_EXTIO2.h>
 #include "M5UnitKmeterISO.h"
 
+//EEPROM
+#include <EEPROM.h>
+int addr = 0;       // EEPROMのスタートアドレス
+#define SIZE 32     // EEPROMのサイズ
+
 // BLE Peripheral
 #include <BLEDevice.h>
 #include <BLE2902.h>
@@ -47,6 +52,8 @@ bool cooling = false;         // 冷却中
 bool heating = false;         // 加熱中
 bool BLEPeripheral = true;    // BLE Peripheral有効/無効
 enum Mode {temp, pump, Hi, Lo, Mode_NUM};  // 画面遷移モード
+bool save = false;            // EEPROMに保存
+unsigned long saveTime = 0;   // EEPROMに保存した時刻
 
 // BLE Serverのコールバックで接続に対する処理を行う https://qiita.com/IRumA/items/00fc746892570f8d1c38
 class ServerCallbacks : public BLEServerCallbacks {
@@ -117,6 +124,19 @@ void settingmode(enum Mode setmode, bool flash){
     oldPosition = newPosition;
   }
 
+  if (save) {                             // EEPROMに保存した場合
+    if (millis() - saveTime < 2000) {       // 保存から2000msec間
+      DinMeter.Display.clear(TFT_RED);        // 背景色を赤に設定
+    }
+    else {                                  // 2000msecを過ぎたら
+      save = false;
+    }
+  }
+  else {                                  // EEPROMに保存しなかった場合
+    DinMeter.Display.clear(TFT_BLACK);      // 背景色を黒に設定
+  }
+  
+  // 温度が更新された場合
   if (NowTemperature != OldTemperature || flash) {
     DinMeter.Display.drawString(" current: " + String(NowTemperature) + ("C' "), DinMeter.Display.width() / 2, DinMeter.Display.height() / 4 * 1);
     OldTemperature = NowTemperature;
@@ -172,6 +192,25 @@ void setup() {
   //DinMeter.begin(cfg, true);
   DinMeter.begin(cfg, false);
   Serial.begin(115200);
+
+  // EEPROMの初期化
+  EEPROM.begin(SIZE);
+
+  // ボタンを押したまま起動した場合は初期値をEEPROMに復元する
+  if (DinMeter.BtnA.isPressed()) {
+    EEPROM.put(0, PUMP_SPEED);                  // ポンプ速度をEEPROMに書き込み
+    EEPROM.put(sizeof(PUMP_SPEED), HiTemp);     // 上限温度をEEPROMに書き込み
+    EEPROM.put(sizeof(HiTemp), LoTemp);         // 下限温度をEEPROMに書き込み
+    Serial.println("Settings saved to EEPROM.");
+    if (EEPROM.commit()) {
+      Serial.println("EEPROM successfully committed");
+    } else {
+      Serial.println("ERROR! EEPROM commit failed");
+    }
+  }
+  EEPROM.get(0, PUMP_SPEED);                  // ポンプ速度をEEPROMから読み取り
+  EEPROM.get(sizeof(PUMP_SPEED), HiTemp);     // 上限温度をEEPROMから読み取り
+  EEPROM.get(sizeof(HiTemp), LoTemp);         // 下限温度をEEPROMから読み取り
 
   // PWMの初期化
   pinMode(pumpPin, OUTPUT);                   // PWM出力を行う端子を出力端子として設定
@@ -329,17 +368,29 @@ void loop() {
   uint8_t PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);
   ledcWrite(PUMP_CHANNEL, PUMP_int8t);
 
+  // 画面遷移のためのモード切替
   if (DinMeter.BtnA.wasPressed()) {
     DinMeter.Speaker.tone(8000, 20);
     setmode++;
-    DinMeter.Display.clear();
     flash = true;
     if (setmode >= Mode_NUM){
       setmode = 0;
     }
   }
-  if (DinMeter.BtnA.pressedFor(5000)) {
-    //DinMeter.Encoder.write(100);
+
+  // EEPROMに設定値を書き込み
+  if (DinMeter.BtnA.pressedFor(2000)) {
+    EEPROM.put(0, PUMP_SPEED);                  // ポンプ速度をEEPROMに書き込み
+    EEPROM.put(sizeof(PUMP_SPEED), HiTemp);     // 上限温度をEEPROMに書き込み
+    EEPROM.put(sizeof(HiTemp), LoTemp);         // 下限温度をEEPROMに書き込み
+    Serial.println("Settings saved to EEPROM.");
+    if (EEPROM.commit()) {
+      Serial.println("EEPROM successfully committed");
+    } else {
+      Serial.println("ERROR! EEPROM commit failed");
+    }
+    save = true;
+    saveTime = millis();
   }
 
   // 画面遷移
