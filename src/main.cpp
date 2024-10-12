@@ -305,6 +305,7 @@ void loop() {
   static int setmode;                   // 画面遷移モード
   TargetTemp = (HiTemp + LoTemp ) / 2;  // 目標温度(Celsius)
   bool flash = false;                   // 画面更新
+  static uint8_t PUMP_int8t;            // 保温水ポンプ回転速度(0-255)
 
   // ボタンの読み取り
   DinMeter.update();
@@ -323,7 +324,7 @@ void loop() {
   if (cooling) {
     Serial.print("ON\t");
     // extio.setDigitalOutput(fanPin, HIGH);
-    PUMP_SPEED = 0;                           // 保温水ポンプを止める
+    PUMP_int8t = 0;                               // 保温水ポンプを止める
   }
   else {
     Serial.print("OFF\t");
@@ -344,6 +345,7 @@ void loop() {
   if (heating) {
     Serial.print("ON\t");
     // extio.setDigitalOutput(heaterPin, HIGH);
+    PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);   // 保温水ポンプの回転数を設定する
   }
   else {
     Serial.print("OFF\t");
@@ -352,8 +354,7 @@ void loop() {
 
   Serial.println("");
 
-  // 保温水ポンプを動作させる
-  uint8_t PUMP_int8t = map(PUMP_SPEED, 0, 100, 0, 255);
+  // 保温水ポンプの回転数をPWMで制御する
   ledcWrite(PUMP_CHANNEL, PUMP_int8t);
 
   // 画面遷移のためのモード切替
