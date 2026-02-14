@@ -84,7 +84,7 @@ void TempRead(void *pvParameters) {
         //    "Chip Celsius Temp: %.2fC\r\n",
         //    ((float)(kmeter.getInternalCelsiusTempValue())) / 100);
 
-        std::string newData = String(NowTemperature).c_str();   //BLE Peripheral用にデータを格納
+        std::string newData = String(NowTemperature).c_str() + std::string("\n");   //BLE Peripheral用に改行コード付きでデータを格納
         //pCharacteristic->setValue(newData);                     //BLE PeripheralのReadコマンドでデータを送信
         pNotifyCharacteristic->setValue(newData);               //BLE PeripheralのNotifyコマンドでデータを送信
         pNotifyCharacteristic->notify();

@@ -8,11 +8,11 @@ Chibi-T Furoshiki Heater は M5DinMeter（M5Stack StampS3） + M5Unit Kmeter ISO
 
 ## 主な構成要素
 
-- [M5Stack StampS3](https://docs.m5stack.com/en/core/StampS3)   
+- [M5Stack StampS3](https://docs.m5stack.com/en/core/StampS3)  
   - ESP32-S3マイコンボード
-- [M5DinMeter](https://docs.m5stack.com/ja/core/M5DinMeter)   
+- [M5DinMeter](https://docs.m5stack.com/ja/core/M5DinMeter)  
   - 表示・ボタン・スピーカ・ロータリエンコーダ
-- [M5Unit Kmeter ISO](https://docs.m5stack.com/en/unit/KMeterISO%20Unit)   
+- [M5Unit Kmeter ISO](https://docs.m5stack.com/en/unit/KMeterISO%20Unit)  
   - 熱電対温度計測ユニット
 - [TB67H450FNG搭載モータドライバ ピッチ変換基板](https://www.switch-science.com/products/5880)
   - 冷却水循環ポンプ制御用モータドライバ
@@ -70,7 +70,7 @@ Chibi-T Furoshiki Heater は M5DinMeter（M5Stack StampS3） + M5Unit Kmeter ISO
 ## EEPROM 保存フォーマット
 
 | オフセット | 内容 | 型 | 備考 |
-|------------|------|----|------|
+| --------- | ---- | -- | ---- |
 | 0 | PUMP_SPEED | int8_t | 0–100 (%) |
 | sizeof(PUMP_SPEED) | HiTemp | int8_t | 上限温度 (℃) |
 | sizeof(PUMP_SPEED)+sizeof(HiTemp) | LoTemp | int8_t | 下限温度 (℃) |
@@ -117,7 +117,7 @@ Chibi-T Furoshiki Heater は M5DinMeter（M5Stack StampS3） + M5Unit Kmeter ISO
 
 - 上限温度 (`HiTemp`) は過熱防止のため用途に合わせ適切に設定 (例: 85℃ 初期値)
 - ポンプ停止中に急激な温度上昇があればヒーター制御（今後 EXTIO2）を追加するか警報機能を検討
-- センサー異常 (`error_status != 0`) の場合はシリアルへ Error 出力   
+- センサー異常 (`error_status != 0`) の場合はシリアルへ Error 出力  
   将来的にフェイルセーフとしてヒーター停止処理を追加予定
 
 ## ビルドオプション抜粋 (`platformio.ini`)
@@ -132,13 +132,13 @@ build_flags = -D ARDUINO_USB_CDC_ON_BOOT=1 -DCORE_DEBUG_LEVEL=0
 ## 仕様・設定値
 
 | 項目 | 仕様・設定値 | 備考 |
-|------|----------|------|
+| ---- | -------- | ---- |
 | EXTIO2 最終構成 | 未定 | ピン番号/電力仕様は後日確定。現状ヒーター/ファン制御はコメントアウト。 |
 | ポンプPWM周波数 | 1000 Hz | ノイズ・キャビテーション問題なし。 |
 | 温度帯 | 80±5℃ (Hi=85 / Lo=75) | Target=(Hi+Lo)/2。 |
 | センサー異常時フェイルセーフ | 不要 | 異常時はシリアルログのみ。<BR>強制停止動作は実装しない方針。 |
 | BLE 書き換えパラメータ | なし | 現状は温度 Notify のみ。<BR>設定変更は本体操作。 |
-| エンコーダステップ | ポンプ ±5%, 温度 ±1℃ |  |
+| エンコーダステップ | ポンプ ±5%, 温度 ±1℃ | |
 | ログ保存/外部連携 | 外部 BLE Central へ転送 | 受信側: [M5NanoC6_BLE_Central](https://github.com/todateman/M5NanoC6_BLE_Central) |
 
 ### 今後の検討候補
