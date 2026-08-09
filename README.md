@@ -42,6 +42,7 @@ Chibi-T Furoshiki Heater は M5DinMeter（M5Stack StampS3） + M5Unit Kmeter ISO
 7. EEPROM 保存: 起動時 BtnA 押下で初期値保存。通常動作中 BtnA 長押し(2000ms)で現在設定値を保存。
 8. BLE Peripheral: 温度を Notify する Characteristics を提供。接続維持と再アドバタイズ処理。
 9. エンコーダ読取: PCNT (Pulse Counter) にて方向とステップを判定し、現在モードの設定値を増減。
+10. Web OTA: 起動時にエンコーダを3秒以上長押しすると Wi-Fi AP + ブラウザ経由のファームウェア更新モードへ移行（USB接続不要）。
 
 ## 画面表示と操作
 
@@ -79,6 +80,22 @@ Chibi-T Furoshiki Heater は M5DinMeter（M5Stack StampS3） + M5Unit Kmeter ISO
 - 保存トリガ: 起動時 BtnA 押下 / 動作中 BtnA 長押し(2000ms)。
 - 保存後 `EEPROM.commit()` 成功で赤画面点灯。
 
+## Web OTA（ファームウェア更新）
+
+USBケーブルを接続せず、ブラウザ経由で無線ファームウェア更新ができます。
+
+- 起動トリガ: 電源投入時にエンコーダ(BtnA)を押したまま起動し、そのまま**3秒以上**ホールドすると Web OTA モードへ移行。
+  - **3秒未満**で離した場合は従来通り EEPROM 初期値書き込み（工場出荷リセット）が実行されます（挙動は変更なし）。
+- Web OTA モードに入ると、通常の温度制御・BLE・エンコーダ設定変更は一切動作せず、TFT に以下を表示します。
+  - AP SSID / パスワード / 割り当てIPアドレス / 状態（`Waiting for upload...` など）
+- 接続手順:
+  1. PC・スマホの Wi-Fi 設定で SSID `ChibiT-Heater-OTA`（パスワード `chibit-ota-2026`）に接続。
+  2. ブラウザで `http://192.168.4.1/` を開く。
+  3. アップロードフォームで PlatformIO でビルドした `firmware.bin`（`.pio/build/m5stack-stamps3/firmware.bin`）を選択しアップロード。
+  4. 書き込み成功後は画面に `Success! Rebooting...` と表示され、自動的に再起動して通常モードへ復帰します。
+  5. 書き込みに失敗した場合は `Update FAILED. Retry.` を表示したまま待機するので、再アップロードしてください。
+- 実装は Arduino-ESP32 標準ライブラリ（`WiFi` / `WebServer` / `Update`）のみで構成されており、追加の外部 OTA ライブラリには依存していません。
+
 ## セットアップ手順
 
 1. ハード準備:
@@ -87,7 +104,7 @@ Chibi-T Furoshiki Heater は M5DinMeter（M5Stack StampS3） + M5Unit Kmeter ISO
    - モータドライバの `IN1` を `PortB` の `Pin2` へ接続
    - ヒーター / 冷却ファンは現在未接続（EXTIO2 実装前）
 
-   ![](fig/wiring.png)
+   ![Wiring diagram for Chibi-T Furoshiki Heater components](fig/wiring.png)
 
 2. 開発環境:
    - VSCode + PlatformIO
@@ -140,6 +157,9 @@ build_flags = -D ARDUINO_USB_CDC_ON_BOOT=1 -DCORE_DEBUG_LEVEL=0
 | BLE 書き換えパラメータ | なし | 現状は温度 Notify のみ。<BR>設定変更は本体操作。 |
 | エンコーダステップ | ポンプ ±5%, 温度 ±1℃ | |
 | ログ保存/外部連携 | 外部 BLE Central へ転送 | 受信側: [M5NanoC6_BLE_Central](https://github.com/todateman/M5NanoC6_BLE_Central) |
+| Web OTA 起動ホールド時間 | 3秒以上 | 3秒未満はEEPROM初期化(従来動作)。 |
+| Web OTA AP SSID / パスワード | `ChibiT-Heater-OTA` / `chibit-ota-2026` | ソースコード内定数、変更可。 |
+| Web OTA アクセスURL | `http://192.168.4.1/` | AP接続後にブラウザでアクセス。 |
 
 ### 今後の検討候補
 

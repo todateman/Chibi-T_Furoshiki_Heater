@@ -13,6 +13,11 @@ int addr = 0;       // EEPROMのスタートアドレス
 #include <BLEDevice.h>
 #include <BLE2902.h>
 
+// Web OTA (AP mode)
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Update.h>
+
 // BLE サービスとキャラクタリスティックのUUIDを定義 https://www.uuidgenerator.net/version4
 #define SERVICE_UUID "7c44181A-c1a4-4635-a119-b490ed272552"
 #define CHARACTERISTIC_UUID "7c442A00-c1a4-4635-a119-b490ed272552"
@@ -54,6 +59,12 @@ bool BLEPeripheral = true;    // BLE Peripheral有効/無効
 enum Mode {temp, pump, Hi, Lo, Mode_NUM};  // 画面遷移モード
 bool save = false;            // EEPROMに保存
 unsigned long saveTime = 0;   // EEPROMに保存した時刻
+
+// ===== Web OTA (AP mode) 設定 =====
+const char* const OTA_AP_SSID      = "ChibiT-Heater-OTA";  // AP SSID
+const char* const OTA_AP_PASSWORD  = "chibit-ota-2026";    // WPA2パスワード(8文字以上)
+const uint32_t    BOOT_OTA_HOLD_MS = 3000;                 // 起動時ホールド時間しきい値(ms)
+WebServer otaServer(80);
 
 // BLE Serverのコールバックで接続に対する処理を行う https://qiita.com/IRumA/items/00fc746892570f8d1c38
 class ServerCallbacks : public BLEServerCallbacks {
@@ -175,25 +186,150 @@ void settingmode(enum Mode setmode, bool flash){
   DinMeter.Display.drawString(" HEAT ", DinMeter.Display.width() / 3 * 2 + 10, DinMeter.Display.height() / 4 * 3);
 }
 
+// ===== Web OTAモード =====
+
+// Web OTA画面の描画(SSID/PASS/IP/状態を表示)
+void otaDrawScreen(const String &statusLine, uint16_t bg = TFT_BLACK) {
+  DinMeter.Display.clear(bg);
+  DinMeter.Display.setTextFont(&fonts::Font2);   // 情報量が多いため小さいフォントに切替
+  DinMeter.Display.setTextSize(1);
+  DinMeter.Display.setTextDatum(middle_center);
+  DinMeter.Display.setTextColor(GREEN, bg);
+
+  int h = DinMeter.Display.height();
+  int w = DinMeter.Display.width() / 2;
+  DinMeter.Display.drawString("== Web OTA Mode ==", w, h / 5 * 1);
+  DinMeter.Display.drawString("SSID: " + String(OTA_AP_SSID), w, h / 5 * 2);
+  DinMeter.Display.drawString("PASS: " + String(OTA_AP_PASSWORD), w, h / 5 * 3);
+  DinMeter.Display.drawString("IP  : " + WiFi.softAPIP().toString(), w, h / 5 * 4);
+  DinMeter.Display.drawString(statusLine, w, h / 5 * 5);
+}
+
+// ファームウェアアップロード用フォーム(標準ライブラリのみで完結)
+static const char OTA_INDEX_HTML[] PROGMEM = R"(
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Chibi-T Furoshiki Heater OTA</title></head>
+<body>
+<h2>Chibi-T Furoshiki Heater - Firmware Update</h2>
+<form method='POST' action='/update' enctype='multipart/form-data'>
+  <input type='file' name='update' accept='.bin'>
+  <input type='submit' value='Upload &amp; Update'>
+</form>
+</body></html>
+)";
+
+void handleOTARoot() {
+  otaServer.send(200, "text/html", OTA_INDEX_HTML);
+}
+
+// アップロード中の進捗コールバック
+void handleOTAUpload() {
+  HTTPUpload &upload = otaServer.upload();
+
+  if (upload.status == UPLOAD_FILE_START) {
+    Serial.printf("OTA Update Start: %s\n", upload.filename.c_str());
+    otaDrawScreen("Uploading...");
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.printf("OTA Update Success: %u bytes\n", upload.totalSize);
+    } else {
+      Update.printError(Serial);
+    }
+  }
+}
+
+// アップロード完了後のレスポンス送信＋再起動(成功時)/エラー表示(失敗時)
+void handleOTAResult() {
+  bool ok = !Update.hasError();
+  otaServer.sendHeader("Connection", "close");
+  otaServer.send(200, "text/plain", ok ? "OK" : "FAIL");
+
+  if (ok) {
+    otaDrawScreen("Success! Rebooting...", TFT_BLUE);
+    delay(1500);
+    ESP.restart();
+  } else {
+    otaDrawScreen("Update FAILED. Retry.", TFT_RED);
+  }
+}
+
+// エンコーダを押しながら起動した場合(3秒以上ホールド)に移行するWi-Fi APモード
+// Web OTAモード。この関数からは戻らない(通常のloop()には一切入らない)。
+void enterWebOTAMode() {
+  Serial.println("Entering Web OTA (AP) mode...");
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(OTA_AP_SSID, OTA_AP_PASSWORD);
+  delay(100);   // softAPIP()確定待ち
+
+  otaDrawScreen("Waiting for upload...");
+
+  otaServer.on("/", HTTP_GET, handleOTARoot);
+  otaServer.on("/update", HTTP_POST, handleOTAResult, handleOTAUpload);
+  otaServer.begin();
+
+  uint8_t lastStationCount = 0;
+  while (true) {
+    otaServer.handleClient();
+
+    uint8_t n = WiFi.softAPgetStationNum();
+    if (n != lastStationCount) {
+      otaDrawScreen(n > 0 ? "Client connected" : "Waiting for upload...");
+      lastStationCount = n;
+    }
+    delay(2);
+  }
+}
+
 void setup() {
   auto cfg = M5.config();
   //DinMeter.begin(cfg, true);
   DinMeter.begin(cfg, false);
   Serial.begin(115200);
 
+  // ディスプレイ初期化(起動時ボタン判定でWeb OTA画面を表示するため先に行う)
+  DinMeter.Display.setRotation(1);
+  DinMeter.Display.setTextColor(GREEN, BLACK);
+  DinMeter.Display.setTextDatum(middle_center);
+  DinMeter.Display.setTextFont(&fonts::Orbitron_Light_24);
+  DinMeter.Display.setTextSize(1);
+
   // EEPROMの初期化
   EEPROM.begin(SIZE);
 
-  // ボタンを押したまま起動した場合は初期値をEEPROMに復元する
+  // ボタンを押したまま起動した場合の分岐
+  // 3秒未満で離した場合: 従来通り初期値をEEPROMに復元する
+  // 3秒以上ホールドした場合: Wi-Fi APモードによるWeb OTAモードへ移行する
   if (DinMeter.BtnA.isPressed()) {
-    EEPROM.put(0, PUMP_SPEED);                  // ポンプ速度をEEPROMに書き込み
-    EEPROM.put(sizeof(PUMP_SPEED), HiTemp);     // 上限温度をEEPROMに書き込み
-    EEPROM.put(sizeof(HiTemp), LoTemp);         // 下限温度をEEPROMに書き込み
-    Serial.println("Settings saved to EEPROM.");
-    if (EEPROM.commit()) {
-      Serial.println("EEPROM successfully committed");
+    bool otaRequested = false;
+    while (DinMeter.BtnA.isPressed()) {
+      DinMeter.update();
+      if (DinMeter.BtnA.pressedFor(BOOT_OTA_HOLD_MS)) {
+        otaRequested = true;
+        break;
+      }
+      delay(10);
+    }
+
+    if (otaRequested) {
+      enterWebOTAMode();   // この関数からは戻らない(成功時ESP.restart / 失敗時はエラー表示のまま待機)
     } else {
-      Serial.println("ERROR! EEPROM commit failed");
+      EEPROM.put(0, PUMP_SPEED);                  // ポンプ速度をEEPROMに書き込み
+      EEPROM.put(sizeof(PUMP_SPEED), HiTemp);     // 上限温度をEEPROMに書き込み
+      EEPROM.put(sizeof(HiTemp), LoTemp);         // 下限温度をEEPROMに書き込み
+      Serial.println("Settings saved to EEPROM.");
+      if (EEPROM.commit()) {
+        Serial.println("EEPROM successfully committed");
+      } else {
+        Serial.println("ERROR! EEPROM commit failed");
+      }
     }
   }
   EEPROM.get(addr, PUMP_SPEED);                                     // ポンプ速度をEEPROMから読み取り
@@ -204,12 +340,6 @@ void setup() {
   pinMode(pumpPin, OUTPUT);                   // PWM出力を行う端子を出力端子として設定
   ledcSetup(PUMP_CHANNEL, PUMP_BASE_FREQ, 8); // PWM出力波形の初期設定(チャンネル, 周波数 bit)
   ledcAttachPin(pumpPin, PUMP_CHANNEL);       // チャンネルに対する出力端子を設定
-
-  DinMeter.Display.setRotation(1);
-  DinMeter.Display.setTextColor(GREEN, BLACK);
-  DinMeter.Display.setTextDatum(middle_center);
-  DinMeter.Display.setTextFont(&fonts::Orbitron_Light_24);
-  DinMeter.Display.setTextSize(1);
 
   // パルスカウンタの設定
   pcnt_config_t pcnt_config = {};
