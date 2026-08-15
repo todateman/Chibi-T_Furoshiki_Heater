@@ -198,11 +198,11 @@ void otaDrawScreen(const String &statusLine, uint16_t bg = TFT_BLACK) {
 
   int h = DinMeter.Display.height();
   int w = DinMeter.Display.width() / 2;
-  DinMeter.Display.drawString("== Web OTA Mode ==", w, h / 5 * 1);
-  DinMeter.Display.drawString("SSID: " + String(OTA_AP_SSID), w, h / 5 * 2);
-  DinMeter.Display.drawString("PASS: " + String(OTA_AP_PASSWORD), w, h / 5 * 3);
-  DinMeter.Display.drawString("IP  : " + WiFi.softAPIP().toString(), w, h / 5 * 4);
-  DinMeter.Display.drawString(statusLine, w, h / 5 * 5);
+  DinMeter.Display.drawString("== Web OTA Mode ==", w, h / 5 * 0.5);
+  DinMeter.Display.drawString("SSID: " + String(OTA_AP_SSID), w, h / 5 * 1.5);
+  DinMeter.Display.drawString("PASS: " + String(OTA_AP_PASSWORD), w, h / 5 * 2.5);
+  DinMeter.Display.drawString("IP  : " + WiFi.softAPIP().toString(), w, h / 5 * 3.5);
+  DinMeter.Display.drawString(statusLine, w, h / 5 * 4.5);
 }
 
 // ファームウェアアップロード用フォーム(標準ライブラリのみで完結)
