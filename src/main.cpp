@@ -85,10 +85,13 @@ class ServerCallbacks : public BLEServerCallbacks {
 void TempRead(void *pvParameters) {
   static uint8_t error_status;
   static unsigned long getTempTime;     // 温度を読み取った時刻
+  static uint8_t errorCount = 0;        // 連続エラー回数
+  const uint8_t ERROR_REINIT_COUNT = 5; // この回数連続でエラーになったら熱電対ユニットを再初期化する
   while (1) {
-    error_status = kmeter.getReadyStatus();
     if (millis() - getTempTime >= sleeptime * 1000) {  // センサーのスリープ時間以上経過したら
+      error_status = kmeter.getReadyStatus();          // I2C負荷を抑えるため読み取り時のみ確認する
       if (error_status == 0) {
+        errorCount = 0;
         NowTemperature = ((float)(kmeter.getCelsiusTempValue())) / 100;
         //Serial.printf("Celsius Temp: %.2fC\t", NowTemperature);
         //Serial.printf(
@@ -100,7 +103,14 @@ void TempRead(void *pvParameters) {
         pNotifyCharacteristic->setValue(newData);               //BLE PeripheralのNotifyコマンドでデータを送信
         pNotifyCharacteristic->notify();
       } else {
-        Serial.printf("Error: %d", kmeter.getReadyStatus());
+        // エラー中はNotifyを送らない(受信側のBLE中継機がNotify途絶を検知し、古い値を破棄する)
+        Serial.printf("Error: %d\n", error_status);
+        if (++errorCount >= ERROR_REINIT_COUNT) {
+          Serial.println("KmeterISO reinitializing");
+          Wire.end();   // 起動済みのままではWire.begin()が何もしないため、一度止めてバスを初期化し直す
+          kmeter.begin(&Wire, KMETER_DEFAULT_ADDR, (int)SDA, (int)SCL, 100000L);
+          errorCount = 0;
+        }
       }
       getTempTime = millis();
     }

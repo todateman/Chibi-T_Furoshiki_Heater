@@ -33,7 +33,7 @@ Chibi-T Furoshiki Heater は M5DinMeter（M5Stack StampS3） + M5Unit Kmeter ISO
 
 ## 機能一覧
 
-1. 温度取得タスク: FreeRTOS タスク `TempRead` が熱電対値を 1 秒周期（`sleeptime`）で取得し、BLE Notify を送信。
+1. 温度取得タスク: FreeRTOS タスク `TempRead` が熱電対値を 1 秒周期（`sleeptime`）で取得し、BLE Notify を送信。センサー状態（`getReadyStatus()`）の確認も読み取り時のみ行う（以前は 1ms ごとに I2C で確認しており、バス負荷が高かった）。
 2. 温度表示: 現在温度と設定値（Target / 変更対象）を TFT に表示。
 3. モード遷移: BtnA 短押しで `temp -> pump -> Hi -> Lo -> (戻る)` のローテーション。
 4. ポンプ制御: PWM (LED PWM `ledcWrite`) により 0–100% を 8bit (0–255) へマッピング。
@@ -134,8 +134,10 @@ USBケーブルを接続せず、ブラウザ経由で無線ファームウェ�
 
 - 上限温度 (`HiTemp`) は過熱防止のため用途に合わせ適切に設定 (例: 85℃ 初期値)
 - ポンプ停止中に急激な温度上昇があればヒーター制御（今後 EXTIO2）を追加するか警報機能を検討
-- センサー異常 (`error_status != 0`) の場合はシリアルへ Error 出力  
-  将来的にフェイルセーフとしてヒーター停止処理を追加予定
+- センサー異常 (`error_status != 0`) の場合はシリアルへ Error 出力し、BLE Notify は送信しない  
+  - 5 回連続（約 5 秒）で異常が続いた場合は `Wire.end()` してから `kmeter.begin()` で熱電対ユニットを再初期化する（シリアルに `KmeterISO reinitializing` を出力）
+  - Notify が止まると、受信側の [BLE 中継機](https://github.com/todateman/nRF52840_BLE_Central) が 3 秒で古い温度を破棄し、5 秒で切断・再接続する。そのため Logger に古い温度が記録され続けることはない
+  - 将来的にフェイルセーフとしてヒーター停止処理を追加予定
 
 ## ビルドオプション抜粋 (`platformio.ini`)
 
@@ -153,10 +155,10 @@ build_flags = -D ARDUINO_USB_CDC_ON_BOOT=1 -DCORE_DEBUG_LEVEL=0
 | EXTIO2 最終構成 | 未定 | ピン番号/電力仕様は後日確定。現状ヒーター/ファン制御はコメントアウト。 |
 | ポンプPWM周波数 | 1000 Hz | ノイズ・キャビテーション問題なし。 |
 | 温度帯 | 80±5℃ (Hi=85 / Lo=75) | Target=(Hi+Lo)/2。 |
-| センサー異常時フェイルセーフ | 不要 | 異常時はシリアルログのみ。<BR>強制停止動作は実装しない方針。 |
+| センサー異常時フェイルセーフ | 不要 | 異常時はシリアルログ出力と Notify 停止、5回連続異常で熱電対ユニット再初期化。<BR>強制停止動作は実装しない方針。 |
 | BLE 書き換えパラメータ | なし | 現状は温度 Notify のみ。<BR>設定変更は本体操作。 |
 | エンコーダステップ | ポンプ ±5%, 温度 ±1℃ | |
-| ログ保存/外部連携 | 外部 BLE Central へ転送 | 受信側: [M5NanoC6_BLE_Central](https://github.com/todateman/M5NanoC6_BLE_Central) |
+| ログ保存/外部連携 | 外部 BLE Central へ転送 | 受信側: [nRF52840_BLE_Central](https://github.com/todateman/nRF52840_BLE_Central) |
 | Web OTA 起動ホールド時間 | 3秒以上 | 3秒未満はEEPROM初期化(従来動作)。 |
 | Web OTA AP SSID / パスワード | `ChibiT-Heater-OTA` / `chibit-ota-2026` | ソースコード内定数、変更可。 |
 | Web OTA アクセスURL | `http://192.168.4.1/` | AP接続後にブラウザでアクセス。 |
